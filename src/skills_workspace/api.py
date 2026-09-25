@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .errors import DomainError, ValidationError
+from .inventory_service import InventoryService
 from .service import DomainService
 from .storage import Database
 
@@ -48,6 +49,82 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
             query = parse_qs(parsed.query)
             after = int(query.get("after_sequence", ["0"])[0])
             return 200, {"items": service.audit_events(after)}
+        if method == "POST" and parsed.path == "/store-calendars":
+            receipt = service.set_store_calendar(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/inventory/batches":
+            receipt = service.receive_batch(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/inventory/replenishment-tasks":
+            receipt = service.create_replenishment_task(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/inventory/replenishment-executions":
+            receipt = service.execute_replenishment_task(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/inventory/replans":
+            receipt = service.replan_pending(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/commitments":
+            receipt = service.create_commitment(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/plan-confirmations":
+            receipt = service.confirm_plan(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/commitment-cancellations":
+            receipt = service.cancel_commitment(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/commitment-fulfillments":
+            receipt = service.fulfill_commitment(actor_id=actor_id, **body)
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "POST" and parsed.path == "/commitment-overrides":
+            body = dict(body)
+            action = body.pop("action", "")
+            if action == "lock":
+                receipt = service.lock_commitment(actor_id=actor_id, **body)
+            elif action == "unlock":
+                receipt = service.unlock_commitment(actor_id=actor_id, **body)
+            elif action == "set_priority":
+                receipt = service.set_commitment_priority(actor_id=actor_id, **body)
+            else:
+                raise ValidationError("action 必须是 lock、unlock 或 set_priority")
+            return 200 if receipt.replayed else 201, receipt.__dict__
+        if method == "GET" and parsed.path == "/inventory":
+            query = parse_qs(parsed.query)
+            site_id = query.get("site_id", [""])[0]
+            sku = query.get("sku", [""])[0]
+            if not site_id or not sku:
+                raise ValidationError("site_id 和 sku 不能为空")
+            return 200, service.get_inventory(site_id, sku)
+        if method == "GET" and parsed.path == "/commitments":
+            query = parse_qs(parsed.query)
+            site_id = query.get("site_id", [""])[0]
+            if not site_id:
+                raise ValidationError("site_id 不能为空")
+            status = query.get("status", [None])[0]
+            return 200, {"items": [item.__dict__ for item in
+                                   service.list_commitments(site_id, status)]}
+        if method == "GET" and parsed.path == "/commitment-explanation":
+            query = parse_qs(parsed.query)
+            commitment_id = query.get("commitment_id", [""])[0]
+            if not commitment_id:
+                raise ValidationError("commitment_id 不能为空")
+            return 200, service.commitment_explanation(commitment_id)
+        if method == "GET" and parsed.path == "/plans":
+            query = parse_qs(parsed.query)
+            plan_id = query.get("plan_id", [""])[0]
+            if not plan_id:
+                raise ValidationError("plan_id 不能为空")
+            return 200, service.get_plan(plan_id)
+        if method == "GET" and parsed.path == "/allocation-rules":
+            return 200, service.list_allocation_rules()
+        if method == "GET" and parsed.path == "/replenishment-tasks":
+            query = parse_qs(parsed.query)
+            site_id = query.get("site_id", [""])[0]
+            if not site_id:
+                raise ValidationError("site_id 不能为空")
+            status = query.get("status", [None])[0]
+            return 200, {"items": [item.__dict__ for item in
+                                   service.list_replenishment_tasks(site_id, status)]}
         return 404, {"error": "route_not_found", "message": "接口不存在"}
     except DomainError as exc:
         return exc.status, {"error": exc.code, "message": str(exc)}
@@ -99,7 +176,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
     database = Database(args.database)
-    Handler.service = DomainService(database)
+    Handler.service = InventoryService(database)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     try:
         server.serve_forever()
