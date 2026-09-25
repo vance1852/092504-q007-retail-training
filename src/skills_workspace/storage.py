@@ -63,6 +63,101 @@ CREATE TABLE IF NOT EXISTS audit_events (
     event_hash TEXT NOT NULL UNIQUE,
     occurred_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS store_schedules (
+    site_id TEXT PRIMARY KEY REFERENCES sites(site_id),
+    open_time TEXT NOT NULL,
+    close_time TEXT NOT NULL,
+    closed_weekdays_json TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rule_sets (
+    rule_set_id TEXT PRIMARY KEY,
+    site_id TEXT NOT NULL REFERENCES sites(site_id),
+    version INTEGER NOT NULL,
+    rules_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('published', 'superseded')),
+    published_by TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    UNIQUE(site_id, version)
+);
+CREATE TABLE IF NOT EXISTS stock_batches (
+    batch_id TEXT PRIMARY KEY,
+    site_id TEXT NOT NULL REFERENCES sites(site_id),
+    sku TEXT NOT NULL,
+    shelf_qty INTEGER NOT NULL CHECK(shelf_qty >= 0),
+    backroom_qty INTEGER NOT NULL CHECK(backroom_qty >= 0),
+    expires_on TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_batches_site_sku ON stock_batches(site_id, sku);
+CREATE TABLE IF NOT EXISTS stock_versions (
+    site_id TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version >= 0),
+    PRIMARY KEY(site_id, sku)
+);
+CREATE TABLE IF NOT EXISTS promises (
+    promise_id TEXT PRIMARY KEY,
+    site_id TEXT NOT NULL REFERENCES sites(site_id),
+    sku TEXT NOT NULL,
+    qty INTEGER NOT NULL CHECK(qty > 0),
+    priority INTEGER NOT NULL,
+    min_remaining_days INTEGER,
+    locked INTEGER NOT NULL DEFAULT 0 CHECK(locked IN (0, 1)),
+    status TEXT NOT NULL,
+    requested_at TEXT NOT NULL,
+    effective_at TEXT NOT NULL,
+    business_date TEXT NOT NULL,
+    allocated_qty INTEGER NOT NULL DEFAULT 0 CHECK(allocated_qty >= 0),
+    fulfilled_qty INTEGER NOT NULL DEFAULT 0 CHECK(fulfilled_qty >= 0),
+    cancelled_qty INTEGER NOT NULL DEFAULT 0 CHECK(cancelled_qty >= 0),
+    content_hash TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_promises_site_sku ON promises(site_id, sku);
+CREATE TABLE IF NOT EXISTS allocation_plans (
+    plan_id TEXT PRIMARY KEY,
+    site_id TEXT NOT NULL REFERENCES sites(site_id),
+    sku TEXT NOT NULL,
+    rule_set_id TEXT NOT NULL,
+    rule_version INTEGER NOT NULL,
+    stock_version INTEGER NOT NULL,
+    business_date TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('draft', 'confirmed', 'superseded')),
+    detail_json TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_plans_site_sku ON allocation_plans(site_id, sku);
+CREATE TABLE IF NOT EXISTS allocations (
+    allocation_id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL REFERENCES allocation_plans(plan_id),
+    promise_id TEXT NOT NULL REFERENCES promises(promise_id),
+    batch_id TEXT NOT NULL REFERENCES stock_batches(batch_id),
+    site_id TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    location TEXT NOT NULL CHECK(location IN ('shelf', 'backroom')),
+    qty INTEGER NOT NULL CHECK(qty > 0),
+    released_qty INTEGER NOT NULL DEFAULT 0 CHECK(released_qty >= 0),
+    fulfilled_qty INTEGER NOT NULL DEFAULT 0 CHECK(fulfilled_qty >= 0),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_allocations_promise ON allocations(promise_id);
+CREATE TABLE IF NOT EXISTS replenishment_tasks (
+    task_id TEXT PRIMARY KEY,
+    site_id TEXT NOT NULL REFERENCES sites(site_id),
+    sku TEXT NOT NULL,
+    qty INTEGER NOT NULL CHECK(qty > 0),
+    status TEXT NOT NULL CHECK(status IN ('open', 'completed', 'cancelled')),
+    reason TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    closed_at TEXT
+);
 """
 
 
